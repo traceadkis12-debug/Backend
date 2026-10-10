@@ -1,0 +1,12 @@
+{
+  "name": "local-mail-studio-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Private API backend for Bsmtp Email Studio",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
