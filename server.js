@@ -39,7 +39,7 @@ loadDotEnv(path.join(__dirname, '.env'));
 const CONFIG_DIR = path.join(process.env.APPDATA || path.join(os.homedir(), '.config'), 'LocalMailStudio');
 const CONFIG_FILE = process.env.APP_CONFIG_FILE || path.join(CONFIG_DIR, 'config.json');
 const PORT = Number(process.env.PORT || 3000);
-const HOST = process.env.HOST || '127.0.0.1';
+const HOST = process.env.HOST || (process.env.RENDER === 'true' ? '0.0.0.0' : '127.0.0.1');
 const ALLOWED_ORIGINS = new Set((process.env.ALLOWED_ORIGINS || '')
   .split(',')
   .map(origin => origin.trim())
