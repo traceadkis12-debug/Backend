@@ -47,10 +47,10 @@ const ALLOWED_ORIGINS = new Set((process.env.ALLOWED_ORIGINS || '')
 const MAX_BODY_BYTES = 64 * 1024;
 
 const DEFAULTS = {
-  provider: 'do',
-  endpoint: 'https://api.do.dev/v1/send/emails/send',
-  authHeader: 'Authorization',
-  authPrefix: 'Bearer ',
+  provider: 'brevo',
+  endpoint: 'https://api.brevo.com/v3/smtp/email',
+  authHeader: 'api-key',
+  authPrefix: '',
   apiKey: '',
   senderName: '',
   senderEmail: '',
@@ -68,17 +68,17 @@ async function readConfig() {
     const contents = await fs.readFile(CONFIG_FILE, 'utf8');
     const saved = JSON.parse(contents);
     const config = { ...DEFAULTS, ...saved };
-    if (config.provider === 'brevo' || config.provider === 'resend') {
-      config.provider = 'do';
+    if (config.provider === 'do' || config.provider === 'resend') {
+      config.provider = 'brevo';
       config.endpoint = DEFAULTS.endpoint;
       config.authHeader = DEFAULTS.authHeader;
       config.authPrefix = DEFAULTS.authPrefix;
     }
-    if (config.provider === 'do') config.apiKey = process.env.DO_API_KEY || '';
+    if (config.provider === 'brevo') config.apiKey = process.env.BREVO_API_KEY || '';
     return config;
   } catch (error) {
     if (error.code === 'ENOENT') {
-      return { ...DEFAULTS, apiKey: process.env.DO_API_KEY || '' };
+      return { ...DEFAULTS, apiKey: process.env.BREVO_API_KEY || '' };
     }
     if (error instanceof SyntaxError) {
       throw new Error(`Saved settings are not valid JSON (${CONFIG_FILE}).`);
@@ -103,8 +103,8 @@ function publicSettings(config) {
     senderName: config.senderName,
     senderEmail: config.senderEmail,
     payloadTemplate: config.payloadTemplate,
-    configured: config.provider === 'do'
-      ? Boolean(process.env.DO_API_KEY)
+    configured: config.provider === 'brevo'
+      ? Boolean(process.env.BREVO_API_KEY)
       : Boolean(config.apiKey)
   };
 }
@@ -117,8 +117,8 @@ function validateSettings(input, current) {
   const next = { ...current };
   const providerChanged = input.provider !== undefined && input.provider !== current.provider;
   if (input.provider !== undefined) {
-    if (!['do', 'custom'].includes(input.provider)) {
-      throw httpError(400, 'Choose do.dev or a custom API provider.');
+    if (!['brevo', 'custom'].includes(input.provider)) {
+      throw httpError(400, 'Choose Brevo or a custom API provider.');
     }
     next.provider = input.provider;
   }
@@ -248,22 +248,24 @@ function buildRequest(config, email) {
     senderName: config.senderName,
     senderEmail: config.senderEmail
   };
-  const payload = config.provider === 'do'
+  const payload = config.provider === 'brevo'
     ? {
-        from: { email: config.senderEmail, name: config.senderName },
-        to: [email.to],
+        sender: { name: config.senderName, email: config.senderEmail },
+        to: [{ email: email.to }],
         subject: email.subject,
-        ...(email.html ? { html: email.html } : {}),
-        ...(email.text ? { text: email.text } : {})
+        ...(email.html ? { htmlContent: email.html } : {}),
+        ...(email.text ? { textContent: email.text } : {})
       }
     : replaceTemplateValues(JSON.parse(config.payloadTemplate), values);
 
-  const authValue = `${config.authPrefix}${config.apiKey}`;
+  const authValue = config.provider === 'brevo'
+    ? process.env.BREVO_API_KEY || ''
+    : `${config.authPrefix}${config.apiKey}`;
   return {
     url: config.endpoint,
     headers: {
       'content-type': 'application/json',
-      [config.authHeader]: authValue
+      [config.provider === 'brevo' ? 'api-key' : config.authHeader]: authValue
     },
     body: JSON.stringify(payload)
   };
@@ -346,8 +348,8 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/send') {
       const config = await readConfig();
-      const apiKey = config.provider === 'do' ? process.env.DO_API_KEY : config.apiKey;
-      if (!apiKey) throw httpError(400, 'Set DO_API_KEY on the backend before sending.');
+      const apiKey = config.provider === 'brevo' ? process.env.BREVO_API_KEY : config.apiKey;
+      if (!apiKey) throw httpError(400, 'Set BREVO_API_KEY on the backend before sending.');
       if (!config.senderEmail) throw httpError(400, 'Add a verified sender email in Settings before sending.');
       const email = validateEmail(await readJsonBody(request));
       if (config.provider === 'custom') {
