@@ -47,10 +47,10 @@ const ALLOWED_ORIGINS = new Set((process.env.ALLOWED_ORIGINS || '')
 const MAX_BODY_BYTES = 64 * 1024;
 
 const DEFAULTS = {
-  provider: 'brevo',
-  endpoint: 'https://api.brevo.com/v3/smtp/email',
-  authHeader: 'api-key',
-  authPrefix: '',
+  provider: 'resend',
+  endpoint: 'https://api.resend.com/emails',
+  authHeader: 'Authorization',
+  authPrefix: 'Bearer ',
   apiKey: '',
   senderName: '',
   senderEmail: '',
@@ -68,11 +68,17 @@ async function readConfig() {
     const contents = await fs.readFile(CONFIG_FILE, 'utf8');
     const saved = JSON.parse(contents);
     const config = { ...DEFAULTS, ...saved };
-    if (config.provider === 'brevo') config.apiKey = process.env.BREVO_API_KEY || '';
+    if (config.provider === 'brevo') {
+      config.provider = 'resend';
+      config.endpoint = DEFAULTS.endpoint;
+      config.authHeader = DEFAULTS.authHeader;
+      config.authPrefix = DEFAULTS.authPrefix;
+    }
+    if (config.provider === 'resend') config.apiKey = process.env.RESEND_API_KEY || '';
     return config;
   } catch (error) {
     if (error.code === 'ENOENT') {
-      return { ...DEFAULTS, apiKey: process.env.BREVO_API_KEY || '' };
+      return { ...DEFAULTS, apiKey: process.env.RESEND_API_KEY || '' };
     }
     if (error instanceof SyntaxError) {
       throw new Error(`Saved settings are not valid JSON (${CONFIG_FILE}).`);
@@ -97,7 +103,9 @@ function publicSettings(config) {
     senderName: config.senderName,
     senderEmail: config.senderEmail,
     payloadTemplate: config.payloadTemplate,
-    configured: Boolean(config.apiKey)
+    configured: config.provider === 'resend'
+      ? Boolean(process.env.RESEND_API_KEY)
+      : Boolean(config.apiKey)
   };
 }
 
@@ -107,11 +115,15 @@ function validateSettings(input, current) {
   }
 
   const next = { ...current };
+  const providerChanged = input.provider !== undefined && input.provider !== current.provider;
   if (input.provider !== undefined) {
-    if (!['brevo', 'custom'].includes(input.provider)) {
-      throw httpError(400, 'Choose Brevo or a custom API provider.');
+    if (!['resend', 'custom'].includes(input.provider)) {
+      throw httpError(400, 'Choose Resend or a custom API provider.');
     }
     next.provider = input.provider;
+  }
+  if (providerChanged && next.provider === 'custom' && input.apiKey === undefined) {
+    next.apiKey = '';
   }
 
   if (input.apiKey !== undefined && typeof input.apiKey !== 'string') {
@@ -159,7 +171,7 @@ function validateSettings(input, current) {
     next.apiKey = '';
     next.endpoint = DEFAULTS.endpoint;
     next.authHeader = DEFAULTS.authHeader;
-    next.authPrefix = '';
+    next.authPrefix = DEFAULTS.authPrefix;
   }
 
   return next;
@@ -236,19 +248,19 @@ function buildRequest(config, email) {
     senderName: config.senderName,
     senderEmail: config.senderEmail
   };
-  const payload = config.provider === 'brevo'
+  const payload = config.provider === 'resend'
     ? {
-        sender: { name: config.senderName, email: config.senderEmail },
-        to: [{ email: email.to }],
+        from: config.senderName
+          ? `${config.senderName} <${config.senderEmail}>`
+          : config.senderEmail,
+        to: [email.to],
         subject: email.subject,
-        ...(email.html ? { htmlContent: email.html } : {}),
-        ...(email.text ? { textContent: email.text } : {})
+        ...(email.html ? { html: email.html } : {}),
+        ...(email.text ? { text: email.text } : {})
       }
     : replaceTemplateValues(JSON.parse(config.payloadTemplate), values);
 
-  const authValue = config.provider === 'brevo'
-    ? config.apiKey
-    : `${config.authPrefix}${config.apiKey}`;
+  const authValue = `${config.authPrefix}${config.apiKey}`;
   return {
     url: config.endpoint,
     headers: {
@@ -336,7 +348,8 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/send') {
       const config = await readConfig();
-      if (!config.apiKey) throw httpError(400, 'Add an API key in Settings before sending.');
+      const apiKey = config.provider === 'resend' ? process.env.RESEND_API_KEY : config.apiKey;
+      if (!apiKey) throw httpError(400, 'Set RESEND_API_KEY on the backend before sending.');
       if (!config.senderEmail) throw httpError(400, 'Add a verified sender email in Settings before sending.');
       const email = validateEmail(await readJsonBody(request));
       if (config.provider === 'custom') {
