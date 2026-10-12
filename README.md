@@ -8,7 +8,8 @@ Create `backend/.env` with these variables:
 
 ```env
 ALLOWED_ORIGINS=http://127.0.0.1:5500
-BREVO_API_KEY=your_new_brevo_api_key
+MJ_APIKEY_PUBLIC=your_mailjet_public_api_key
+MJ_APIKEY_PRIVATE=your_mailjet_private_api_key
 ```
 
 Start the backend from this folder with `npm start`. The backend reads `backend/.env` on startup; variables already set in the process environment take precedence over values in `.env`. The `.env` file is ignored by Git. Restart the backend after changing environment variables.
@@ -21,7 +22,7 @@ The local backend does not require an access token. Keep it bound to localhost; 
 
 Deploy this folder as a Node.js service with Node.js 18 or newer and set:
 
-- `BREVO_API_KEY`: your Brevo API key. For the built-in Bsmtp provider, this value is read by the backend and is never returned to the frontend. It is required to send email.
+- `MJ_APIKEY_PUBLIC` and `MJ_APIKEY_PRIVATE`: your Mailjet API key pair. They are read by the backend and never returned to the frontend. Both are required to send email.
 - `ALLOWED_ORIGINS`: comma-separated exact HTTPS origins allowed to use the API, such as `https://your-name.github.io`.
 - `HOST`: optional. Render is detected automatically and binds to `0.0.0.0`; set this to `0.0.0.0` on other hosting platforms that require listening on the public interface.
 - `PORT`: set by most hosting platforms automatically.
@@ -31,6 +32,6 @@ Do not deploy this backend publicly as-is: it has no authentication, so anyone w
 
 ## Provider configuration
 
-The built-in Brevo provider reads `BREVO_API_KEY` from the backend environment or `backend/.env`; the key is not entered in the frontend and is never returned by the API. Custom provider keys are entered in the frontend and stored by the backend outside its source tree. A custom provider can be set up with a public HTTPS endpoint, auth header/prefix, and JSON request template. The backend blocks redirects and endpoints that resolve to private IP addresses.
+The built-in Mailjet provider reads `MJ_APIKEY_PUBLIC` and `MJ_APIKEY_PRIVATE` from the backend environment or `backend/.env`; the credentials are not entered in the frontend and are never returned by the API. Mailjet sends live email through its v3.1 API. Custom provider keys are entered in the frontend and stored by the backend outside its source tree. A custom provider can be set up with a public HTTPS endpoint, auth header/prefix, and JSON request template. The backend blocks redirects and endpoints that resolve to private IP addresses.
 
 The frontend can send separate messages to up to 100 unique recipients from one compose action. It makes individual `/api/send` requests sequentially with a five-second gap between sends, so each provider response is independently reflected in the delivery queue.

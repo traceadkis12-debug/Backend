@@ -47,9 +47,9 @@ const ALLOWED_ORIGINS = new Set((process.env.ALLOWED_ORIGINS || '')
 const MAX_BODY_BYTES = 64 * 1024;
 
 const DEFAULTS = {
-  provider: 'brevo',
-  endpoint: 'https://api.brevo.com/v3/smtp/email',
-  authHeader: 'api-key',
+  provider: 'mailjet',
+  endpoint: 'https://api.mailjet.com/v3.1/send',
+  authHeader: 'Authorization',
   authPrefix: '',
   apiKey: '',
   senderName: '',
@@ -68,17 +68,17 @@ async function readConfig() {
     const contents = await fs.readFile(CONFIG_FILE, 'utf8');
     const saved = JSON.parse(contents);
     const config = { ...DEFAULTS, ...saved };
-    if (config.provider === 'do' || config.provider === 'resend') {
-      config.provider = 'brevo';
+    if (['brevo', 'do', 'resend'].includes(config.provider)) {
+      config.provider = 'mailjet';
       config.endpoint = DEFAULTS.endpoint;
       config.authHeader = DEFAULTS.authHeader;
       config.authPrefix = DEFAULTS.authPrefix;
     }
-    if (config.provider === 'brevo') config.apiKey = process.env.BREVO_API_KEY || '';
+    if (config.provider === 'mailjet') config.apiKey = '';
     return config;
   } catch (error) {
     if (error.code === 'ENOENT') {
-      return { ...DEFAULTS, apiKey: process.env.BREVO_API_KEY || '' };
+      return { ...DEFAULTS };
     }
     if (error instanceof SyntaxError) {
       throw new Error(`Saved settings are not valid JSON (${CONFIG_FILE}).`);
@@ -103,8 +103,8 @@ function publicSettings(config) {
     senderName: config.senderName,
     senderEmail: config.senderEmail,
     payloadTemplate: config.payloadTemplate,
-    configured: config.provider === 'brevo'
-      ? Boolean(process.env.BREVO_API_KEY)
+    configured: config.provider === 'mailjet'
+      ? Boolean(process.env.MJ_APIKEY_PUBLIC && process.env.MJ_APIKEY_PRIVATE)
       : Boolean(config.apiKey)
   };
 }
@@ -117,8 +117,8 @@ function validateSettings(input, current) {
   const next = { ...current };
   const providerChanged = input.provider !== undefined && input.provider !== current.provider;
   if (input.provider !== undefined) {
-    if (!['brevo', 'custom'].includes(input.provider)) {
-      throw httpError(400, 'Choose Brevo or a custom API provider.');
+    if (!['mailjet', 'custom'].includes(input.provider)) {
+      throw httpError(400, 'Choose Mailjet or a custom API provider.');
     }
     next.provider = input.provider;
   }
@@ -248,24 +248,29 @@ function buildRequest(config, email) {
     senderName: config.senderName,
     senderEmail: config.senderEmail
   };
-  const payload = config.provider === 'brevo'
+  const payload = config.provider === 'mailjet'
     ? {
-        sender: { name: config.senderName, email: config.senderEmail },
-        to: [{ email: email.to }],
-        subject: email.subject,
-        ...(email.html ? { htmlContent: email.html } : {}),
-        ...(email.text ? { textContent: email.text } : {})
+        Messages: [{
+        From: {
+          Email: config.senderEmail,
+          ...(config.senderName ? { Name: config.senderName } : {})
+        },
+          To: [{ Email: email.to }],
+          Subject: email.subject,
+          ...(email.html ? { HTMLPart: email.html } : {}),
+          ...(email.text ? { TextPart: email.text } : {})
+        }]
       }
     : replaceTemplateValues(JSON.parse(config.payloadTemplate), values);
 
-  const authValue = config.provider === 'brevo'
-    ? process.env.BREVO_API_KEY || ''
+  const authValue = config.provider === 'mailjet'
+    ? `Basic ${Buffer.from(`${process.env.MJ_APIKEY_PUBLIC}:${process.env.MJ_APIKEY_PRIVATE}`).toString('base64')}`
     : `${config.authPrefix}${config.apiKey}`;
   return {
     url: config.endpoint,
     headers: {
       'content-type': 'application/json',
-      [config.provider === 'brevo' ? 'api-key' : config.authHeader]: authValue
+      [config.authHeader]: authValue
     },
     body: JSON.stringify(payload)
   };
@@ -348,8 +353,14 @@ const server = http.createServer(async (request, response) => {
 
     if (request.method === 'POST' && url.pathname === '/api/send') {
       const config = await readConfig();
-      const apiKey = config.provider === 'brevo' ? process.env.BREVO_API_KEY : config.apiKey;
-      if (!apiKey) throw httpError(400, 'Set BREVO_API_KEY on the backend before sending.');
+      const apiKeyConfigured = config.provider === 'mailjet'
+        ? process.env.MJ_APIKEY_PUBLIC && process.env.MJ_APIKEY_PRIVATE
+        : config.apiKey;
+      if (!apiKeyConfigured) {
+        throw httpError(400, config.provider === 'mailjet'
+          ? 'Set both MJ_APIKEY_PUBLIC and MJ_APIKEY_PRIVATE on the backend before sending.'
+          : 'Add an API key in Settings before sending.');
+      }
       if (!config.senderEmail) throw httpError(400, 'Add a verified sender email in Settings before sending.');
       const email = validateEmail(await readJsonBody(request));
       if (config.provider === 'custom') {
